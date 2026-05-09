@@ -25,3 +25,6 @@ gradle-app.setting
 # IDEA config
 .idea
 
+# VS Code config
+*.code-workspace
+.vscode/
