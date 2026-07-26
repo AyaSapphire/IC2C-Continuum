@@ -1,3 +1,5 @@
+// It is advised to not edit this file directly, in order to update script easily.
+// Instead, edit gradle/scripts/extra.gradle to customize the build.
 import org.jetbrains.gradle.ext.Gradle
 
 plugins {
@@ -5,32 +7,41 @@ plugins {
     id 'java-library'
     id 'maven-publish'
     id 'org.jetbrains.gradle.plugin.idea-ext' version '1.4.1'
-    id 'com.gradleup.shadow' version '9.4.1'
-    id 'xyz.wagyourtail.unimined' version '1.4.17-kappa'
+    id 'com.gtnewhorizons.retrofuturagradle' version '2.0.2'
     id 'net.kyori.blossom' version '2.2.0'
-    id 'com.diffplug.spotless' version '8.4.0'
+    id 'com.diffplug.spotless' version '8.8.0'
+    id 'com.gradleup.shadow' version '9.5.1' apply false
 }
 
 apply from: 'gradle/scripts/helpers.gradle'
+
+if (propertyBool('enable_shadow')) {
+    apply plugin: 'com.gradleup.shadow'
+}
 
 // Early Assertions
 assertProperty 'mod_version'
 assertProperty 'root_package'
 assertProperty 'mod_id'
+assertProperty 'mod_package'
 assertProperty 'mod_name'
 
-assertSubProperties 'use_lombok_ap', 'lombok_version'
 assertSubProperties 'use_access_transformer', 'access_transformer_locations'
-assertSubProperties 'use_mixins', 'mixin_booter_version'
+assertSubProperties 'use_mixins', 'mixin_booter_version', 'mixin_refmap'
 assertSubProperties 'is_coremod', 'coremod_includes_mod', 'coremod_plugin_class_name'
-assertSubProperties 'use_asset_mover', 'asset_mover_version'
-assertSubProperties 'use_config_any_time', 'config_any_time_version'
 
 setDefaultProperty 'use_modern_java_syntax', false, false
+setDefaultProperty 'use_jetbrains_annotations', false, false
 setDefaultProperty 'generate_sources_jar', true, false
 setDefaultProperty 'generate_javadocs_jar', true, false
-setDefaultProperty 'minecraft_username', true, 'Developer'
+setDefaultProperty 'enable_shadow', false, false
+setDefaultProperty 'mapping_channel', true, 'stable'
+setDefaultProperty 'mapping_version', true, '39'
+setDefaultProperty 'use_dependency_at_files', true, true
+setDefaultProperty 'minecraft_username', true, 'Dev'
 setDefaultProperty 'extra_jvm_args', false, ''
+setDefaultProperty 'extra_tweak_classes', false, ''
+setDefaultProperty 'change_minecraft_sources', false, false
 
 version = propertyString('mod_version')
 group = propertyString('root_package')
@@ -38,6 +49,8 @@ group = propertyString('root_package')
 base {
     archivesName = propertyString('mod_id')
 }
+
+tasks.decompressDecompiledSources.enabled !propertyBool('change_minecraft_sources') || !layout.buildDirectory.dir('rfg/minecraft-src').get().asFile.exists()
 
 java {
     toolchain {
@@ -54,55 +67,45 @@ java {
 }
 
 configurations {
-    contain
-    implementation.extendsFrom(contain)
-    modCompileOnly
-    compileOnly.extendsFrom(modCompileOnly)
-    modRuntimeOnly
-    runtimeOnly.extendsFrom(modRuntimeOnly)
-}
-
-String remapTaskName = propertyBool('enable_shadow') ? "remapShadowJar" : "remapJar"
-
-unimined.minecraft {
-    version "1.12.2"
-
-    mappings {
-        mcp("stable", "39-1.12")
-    }
-
-    minecraftForge {
-        if (propertyBool('use_access_transformer')) {
-            accessTransformer "${rootProject.projectDir}/src/main/resources/${propertyString('access_transformer_locations')}"
-        }
-        loader "14.23.5.2860"
-        runs.auth.username = minecraft_username
-        runs.all {
-            def extraArgs = propertyString('extra_jvm_args')
-            if (extraArgs != null && !extraArgs.trim().isEmpty()) {
-                jvmArgs += extraArgs.split { "\\s+" }.toList()
-            }
-            return
-        }
-    }
-
-    defaultRemapJar = false
-
-    String jarTaskName = propertyBool('enable_shadow') ? "shadowJar" : "jar"
-
-    remap(tasks.named(jarTaskName).get()) {
-        mixinRemap {
-            enableBaseMixin()
-            enableMixinExtra()
-        }
-    }
-
-    mods {
-        remap(configurations.modCompileOnly)
-        remap(configurations.modRuntimeOnly)
+    if (propertyBool('enable_shadow')) {
+        shaded
+        implementation.extendsFrom(shaded)
     }
 }
 
+minecraft {
+    mcVersion.set('1.12.2')
+
+    mcpMappingChannel.set(propertyString('mapping_channel'))
+    mcpMappingVersion.set(propertyString('mapping_version'))
+
+    useDependencyAccessTransformers.set(propertyBool('use_dependency_at_files'))
+
+    username.set(propertyString('minecraft_username'))
+    
+    // Add any additional tweaker classes here
+    extraTweakClasses.addAll(propertyStringList('extra_tweak_classes'))
+
+    // Add various JVM arguments here for runtime
+    def args = ['-ea:' + group]
+    if (propertyBool('use_mixins')) {
+        args << '-Dmixin.hotSwap=true'
+        args << '-Dmixin.checks.interfaces=true'
+        args << '-Dmixin.debug.export=true'
+    }
+    extraRunJvmArguments.addAll(args)
+    extraRunJvmArguments.addAll(propertyStringList('extra_jvm_args'))
+}
+
+repositories {
+    maven {
+        name 'CleanroomMC Maven'
+        url 'https://maven.cleanroommc.com'
+    }
+}
+
+// Do not configure your deps here!
+// Check gradle/scripts/dependencies.gradle for that.
 dependencies {
     if (propertyBool('use_modern_java_syntax')) {
         annotationProcessor 'com.github.bsideup.jabel:jabel-javac-plugin:1.0.0'
@@ -111,41 +114,52 @@ dependencies {
         compileOnly ('com.github.bsideup.jabel:jabel-javac-plugin:1.0.0') {
             transitive = false
         }
+        // Allow jdk.unsupported classes like sun.misc.Unsafe, workaround for JDK-8206937 and fixes crashes in tests
+        patchedMinecraft 'me.eigenraven.java8unsupported:java-8-unsupported-shim:1.0.0'
         // Include for tests
         testAnnotationProcessor 'com.github.bsideup.jabel:jabel-javac-plugin:1.0.0'
         testCompileOnly('com.github.bsideup.jabel:jabel-javac-plugin:1.0.0') {
             transitive = false // We only care about the 1 annotation class
         }
     }
-    if (propertyBool('use_lombok_ap')) {
-        compileOnly "org.projectlombok:lombok:${propertyString('lombok_version')}"
-        annotationProcessor "org.projectlombok:lombok:${propertyString('lombok_version')}"
-
-        testCompileOnly "org.projectlombok:lombok:${propertyString('lombok_version')}"
-        testAnnotationProcessor "org.projectlombok:lombok:${propertyString('lombok_version')}"
-    }
-    if (propertyBool('use_asset_mover')) {
-        implementation "com.cleanroommc:assetmover:${propertyString('asset_mover_version')}"
-    }
-    if (propertyBool('use_config_any_time')) {
-        implementation "com.cleanroommc:configanytime:${propertyString('config_any_time_version')}"
+    if (propertyBool('use_jetbrains_annotations')) {
+        compileOnly 'org.jetbrains:annotations:26.1.0'
     }
     if (propertyBool('use_mixins')) {
+        String mixin = modUtils.enableMixins("zone.rong:mixinbooter:${propertyString('mixin_booter_version')}", propertyString('mixin_refmap'))
+        api (mixin) {
+            transitive = false
+        }
         annotationProcessor 'org.ow2.asm:asm-debug-all:5.2'
         annotationProcessor 'com.google.guava:guava:32.1.2-jre'
         annotationProcessor 'com.google.code.gson:gson:2.8.9'
-        implementation ("zone.rong:mixinbooter:${propertyString('mixin_booter_version')}") {
+        annotationProcessor (mixin) {
             transitive = false
         }
     }
     if (propertyBool('enable_junit_testing')) {
-        testImplementation 'org.junit.jupiter:junit-jupiter:5.14.3'
+        testImplementation 'org.junit.jupiter:junit-jupiter:5.14.4'
         testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
     }
-    compileOnly 'com.google.code.findbugs:jsr305:3.0.2'
 }
 
 apply from: 'gradle/scripts/dependencies.gradle'
+
+// Adds Access Transformer files to tasks
+if (propertyBool('use_access_transformer')) {
+    def atFiles = propertyStringList('access_transformer_locations').collect { location ->
+        def fileLocation = file("src/main/resources/${location}")
+        if (!fileLocation.exists()) {
+            throw new GradleException("Access Transformer file [$fileLocation] does not exist!")
+        }
+        return fileLocation
+    }
+
+    // Apply ATs to both Minecraft and Forge sources/runtime patched jar
+    tasks.named('applyJST').configure {
+        accessTransformerFiles.from(atFiles)
+    }
+}
 
 processResources {
     rename '(.+_at.cfg)', 'META-INF/$1'
@@ -158,7 +172,7 @@ sourceSets {
                 property('mod_id', propertyString('mod_id'))
                 property('mod_name', propertyString('mod_name'))
                 property('mod_version', propertyString('mod_version'))
-                property('package', "${root_package}.${mod_id}")
+                property('package', propertyString('mod_package'))
             }
             resources {
                 property('mod_id', propertyString('mod_id'))
@@ -180,53 +194,39 @@ sourceSets {
     }
 }
 
-if (!propertyBool('enable_shadow')) {
-    shadowJar.enabled = false
-}
-
-compileJava {
-    sourceCompatibility = targetCompatibility = JavaVersion.VERSION_1_8
-}
-
 jar {
-    archiveClassifier = 'dev'
-    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
-    if (configurations.contain.size() > 0) {
-        into('/') {
-            from configurations.contain
-        }
-    }
-    doFirst {
-        manifest {
-            def attribute_map = [:]
-            if (propertyBool('is_coremod')) {
-                attribute_map['FMLCorePlugin'] = propertyString('coremod_plugin_class_name')
-                if (propertyBool('coremod_includes_mod')) {
-                    attribute_map['FMLCorePluginContainsFMLMod'] = true
+    manifest {
+        def attribute_map = [:]
+        if (propertyBool('is_coremod')) {
+            attribute_map['FMLCorePlugin'] = propertyString('coremod_plugin_class_name')
+            if (propertyBool('coremod_includes_mod')) {
+                attribute_map['FMLCorePluginContainsFMLMod'] = true
+                def currentTasks = gradle.startParameter.taskNames
+                if (currentTasks[0] == 'build' || currentTasks[0] == 'prepareObfModsFolder' || currentTasks[0] == 'runObfClient') {
+                    attribute_map['ForceLoadAsMod'] = true
                 }
             }
-            if (propertyBool('use_access_transformer')) {
-                attribute_map['FMLAT'] = propertyString('access_transformer_locations')
-            }
-            attributes(attribute_map)
         }
+        if (propertyBool('use_access_transformer')) {
+            attribute_map['FMLAT'] = propertyString('access_transformer_locations')
+        }
+        attributes(attribute_map)
     }
-    finalizedBy(tasks.named(remapTaskName).get())
 }
 
-
-shadowJar {
-    configurations = [project.configurations.shadow]
-    archiveClassifier = "shadow"
-}
-
-
-tasks.named(remapTaskName).configure {
-    doFirst {
-        logging.captureStandardOutput LogLevel.INFO
+if (propertyBool('enable_shadow')) {
+    // Shade deps to the dev jar, so the normal dev jar will contain deps
+    shadowJar {
+        archiveClassifier = 'dev'
+        configurations = [ project.configurations.shaded ]
     }
-    doLast {
-        logging.captureStandardOutput LogLevel.QUIET
+    // Unshaded dev jar get 'plain' as name
+    tasks.named("jar").configure {
+        archiveClassifier = "plain"
+    }
+    // Here we reobf the shaded dev jar, so the final obf jar will contain deps
+    tasks.named('reobfJar').configure {
+        inputJar.set(tasks.named('shadowJar').flatMap { it.archiveFile })
     }
 }
 
@@ -237,8 +237,8 @@ idea {
     project {
         settings {
             runConfigurations {
-                "0. Apply Spotless"(Gradle) {
-                    taskNames = ["spotlessApply"]
+                "0. Setup Decomp Workspace"(Gradle) {
+                    taskNames = ["setupDecompWorkspace"]
                 }
                 "1. Run Client"(Gradle) {
                     taskNames = ["runClient"]
@@ -248,6 +248,15 @@ idea {
                 }
                 "3. Build Mod"(Gradle) {
                     taskNames = ["build"]
+                }
+                "4. Apply Spotless"(Gradle) {
+                    taskNames = ["spotlessApply"]
+                }
+                "5. Run Obfuscated Client"(Gradle) {
+                    taskNames = ["runObfClient"]
+                }
+                "6. Run Obfuscated Server"(Gradle) {
+                    taskNames = ["runObfServer"]
                 }
             }
             compiler.javac {
@@ -263,7 +272,7 @@ idea {
 }
 
 compileTestJava {
-    sourceCompatibility = targetCompatibility = JavaVersion.VERSION_1_8
+    sourceCompatibility = targetCompatibility = 8
 }
 
 test {
@@ -274,6 +283,22 @@ test {
     if (propertyBool('show_testing_output')) {
         testLogging {
             showStandardStreams = true
+        }
+    }
+}
+
+tasks.register('generateMixinJson') {
+    def missingConfig = propertyStringList('mixin_configs').findAll(config -> !file("src/main/resources/mixins.${config}.json").exists())
+    onlyIf {
+        if (propertyBool('use_mixins') && propertyBool('generate_mixins_json')) {
+            return !missingConfig.empty
+        }
+        return false
+    }
+    doLast {
+        for (String mixinConfig : missingConfig) {
+            def file = file("src/main/resources/mixins.${mixinConfig}.json")
+            file << """{\n\t"package": "",\n\t"required": true,\n\t"refmap": "${propertyString('mixin_refmap')}",\n\t"target": "@env(DEFAULT)",\n\t"minVersion": "0.8.5",\n\t"compatibilityLevel": "JAVA_8",\n\t"mixins": [],\n\t"server": [],\n\t"client": []\n}"""
         }
     }
 }
@@ -296,6 +321,27 @@ tasks.withType(JavaCompile).configureEach {
 if (propertyBool('use_modern_java_syntax')) {
     tasks.withType(Javadoc).configureEach {
         sourceCompatibility = 17
+    }
+}
+
+tasks.named('prepareObfModsFolder').configure {
+    finalizedBy 'prioritizeCoremods'
+}
+
+tasks.register('prioritizeCoremods') {
+    dependsOn 'prepareObfModsFolder'
+    doLast {
+        fileTree('run/obfuscated').forEach {
+            if (it.isFile() && it.name =~ '(mixinbooter|configanytime)(-)([0-9])+\\.+([0-9])+(.jar)') {
+                it.renameTo(new File(it.parentFile, "!${it.name}"))
+            }
+        }
+    }
+}
+
+idea.project.settings {
+    taskTriggers {
+        afterSync 'generateMixinJson'
     }
 }
 

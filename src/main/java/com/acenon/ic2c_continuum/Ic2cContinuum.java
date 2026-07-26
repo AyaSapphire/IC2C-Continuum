@@ -1,6 +1,6 @@
-package com.example.modid;
+package com.acenon.ic2c_continuum;
 
-import com.example.modid.proxy.IProxy;
+import com.acenon.ic2c_continuum.proxy.IProxy;
 import net.minecraft.client.Minecraft;
 import net.minecraftforge.fml.common.Mod;
 import net.minecraftforge.fml.common.SidedProxy;
@@ -9,11 +9,11 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 @Mod(modid = Reference.MOD_ID, name = Reference.MOD_NAME, version = Reference.VERSION)
-public class ExampleMod {
+public class Ic2cContinuum {
 
     public static final Logger LOGGER = LogManager.getLogger(Reference.MOD_NAME);
 
-    @SidedProxy(modId = Reference.MOD_ID, clientSide = "com.example.modid.proxy.ClientProxy", serverSide = "com.example.modid.proxy.CommonProxy")
+    @SidedProxy(modId = Reference.MOD_ID, clientSide = "com.acenon.ic2c_continuum.proxy.ClientProxy", serverSide = "com.acenon.ic2c_continuum.proxy.CommonProxy")
     public static IProxy proxy;
     /**
      * <a href="https://cleanroommc.com/wiki/forge-mod-development/event#overview">
